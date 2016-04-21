@@ -157,7 +157,11 @@ func main() {
 				var tcp layers.TCP
 				parser := gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &eth, &ipv4, &ipv6, &tcp)
 
-				h, _ := pcap.OpenLive(deviceName, 65535, true, 500)
+				h, err := pcap.OpenLive(deviceName, 65535, true, 500)
+				if err != nil {
+					log.Error("Could not open ", device, ": ", err)
+					return
+				}
 				defer h.Close()
 				fmt.Printf("Listening to %s\n", deviceName)
 				packetSource := gopacket.NewPacketSource(h, h.LinkType())
