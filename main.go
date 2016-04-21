@@ -75,6 +75,7 @@ func shutDownHook() {
 
 func producerTicker() {
 	durationInMillis := 2000
+	flag.Parse()
 	ticker := time.Tick(time.Duration(durationInMillis) * time.Millisecond)
 
 	config := sarama.NewConfig()
