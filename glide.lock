@@ -1,0 +1,8 @@
+hash: e75f74db035fdc7d0760abe0ede15075394bc54b7c42ca78617de13c3f635131
+updated: 2016-03-19T16:49:10.358324562Z
+imports:
+- name: github.com/google/gopacket
+  version: 8cdd14ca4735e61d81a55f62761fc2c082d41898
+- name: github.com/miekg/pcap
+  version: fbfcc463715f6206524a6b1fcc8ed1b9e7567ba5
+devImports: []

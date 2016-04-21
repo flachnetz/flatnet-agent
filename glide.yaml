@@ -1,0 +1,4 @@
+package: netstream
+import:
+- package: github.com/miekg/pcap
+- package: github.com/google/gopacket
