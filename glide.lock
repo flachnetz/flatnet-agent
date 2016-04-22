@@ -1,5 +1,5 @@
-hash: f7884e9cc5295861218a1aff25b7d08abf13da399f3d0ed7be0bd1e339cec435
-updated: 2016-04-21T13:37:07.38875663Z
+hash: 9971efd4a2c4185f5b793edbb6d00b9d9d57926e8bfefd289d63c3a4837b5790
+updated: 2016-04-22T06:43:35.675429755Z
 imports:
 - name: github.com/davecgh/go-spew
   version: 5215b55f46b2b919f50a1df0eaa5886afe4e3b3d
@@ -14,7 +14,7 @@ imports:
 - name: github.com/golang/snappy
   version: 774a97396f7bfa4165e9dcf4bfa0747ea3edcc02
 - name: github.com/google/gopacket
-  version: 8cdd14ca4735e61d81a55f62761fc2c082d41898
+  version: e732efe9f49bdb679cb087d2eca7191f2f5574b6
   subpackages:
   - layers
   - pcap
@@ -26,4 +26,10 @@ imports:
   version: 68920ff1be3bbd31449ab1e2c255c50cedeb755c
 - name: github.com/Sirupsen/logrus
   version: 081307d9bc1364753142d5962fc1d795c742baaf
+- name: github.com/VividCortex/godaemon
+  version: 3d9f6e0b234fe7d17448b345b2e14ac05814a758
+- name: golang.org/x/sys
+  version: f64b50fbea64174967a8882830d621a18ee1548e
+  subpackages:
+  - unix
 devImports: []

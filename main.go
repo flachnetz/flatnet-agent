@@ -16,11 +16,11 @@ import (
 	"net"
 	"strconv"
 	log "github.com/Sirupsen/logrus"
+	"github.com/VividCortex/godaemon"
 )
 
 var (
 	wg sync.WaitGroup
-	brokers = flag.String("brokers", "docker:9092,192.168.59.100:9092", "The Kafka brokers to connect to, as a comma separated list")
 	ignoredAddresses map[string][]uint16
 	aggregatedPackages map[netAggregationKey]*NetPackage = make(map[netAggregationKey]*NetPackage)
 	aggregatedPackagesChan chan *NetPackage = make(chan *NetPackage, 2048)
@@ -35,7 +35,7 @@ type NetPackages struct {
 	Timestamp        int64
 	ServicePackages  []NetPackage
 	DurationInMillis int
-	encoded          []byte `json: -`
+	encoded          []byte
 }
 type Service struct {
 	Name string
@@ -73,19 +73,22 @@ func shutDownHook() {
 	}()
 }
 
-func producerTicker() {
+func producerTicker(brokers, prefixes []string) {
 	durationInMillis := 2000
-	flag.Parse()
 	ticker := time.Tick(time.Duration(durationInMillis) * time.Millisecond)
 
 	config := sarama.NewConfig()
 	config.Producer.RequiredAcks = sarama.WaitForLocal       // Only wait for the leader to ack
 	config.Producer.Compression = sarama.CompressionSnappy   // Compress messages
 	config.Producer.Flush.Frequency = 500 * time.Millisecond // Flush batches every 500ms
-	brokerList := strings.Split(*brokers, ",")
 
 	// todo error handling
-	producer, _ := sarama.NewAsyncProducer(brokerList, config)
+	producer, err := sarama.NewAsyncProducer(brokers, config)
+	if err != nil {
+		log.WithError(err).Fatal("Could not connect to kafka broker")
+		return
+	}
+
 	defer producer.Close()
 
 	for {
@@ -110,6 +113,7 @@ func producerTicker() {
 					Value: netPackages,
 				}
 			}
+
 		case netPackage := <-aggregatedPackagesChan:
 			if p, exists := aggregatedPackages[netAggregationKey{netPackage.Source, netPackage.Destination}]; exists == false {
 				aggregatedPackages[netAggregationKey{netPackage.Source, netPackage.Destination}] = netPackage
@@ -123,6 +127,20 @@ func producerTicker() {
 }
 
 func main() {
+	flagDaemon := flag.Bool("daemon", false, "Start flatnet in the background")
+	flagBrokers := flag.String("brokers", "docker:9092,192.168.59.100:9092", "The Kafka brokers to connect to, as a comma separated list")
+	flatPrefixes := flag.String("prefix", "", "Only listen on interfaces having one of the given prefixes. " +
+		"Multiple prefixes can be specified as a comma separated list.")
+
+	flag.Parse()
+
+	if *flagDaemon {
+		godaemon.MakeDaemon(&godaemon.DaemonAttr{})
+	}
+
+	brokers := strings.Split(*flagBrokers, ",")
+	prefixes := strings.Split(*flatPrefixes, ",")
+
 	devices, _ := pcap.FindAllDevs()
 	wg.Add(1)
 	shutDownHook()
@@ -130,7 +148,7 @@ func main() {
 	ignoredAddresses = make(map[string][]uint16)
 	ignoredAddresses["31.24.96.135"] = []uint16{0}
 	ignoredAddresses["10.59.25.58"] = []uint16{9092}
-	for _, host := range strings.Split(*brokers, ",") {
+	for _, host := range brokers {
 		hostPort := strings.Split(host, ":")
 
 		addresses, _ := net.LookupHost(hostPort[0])
@@ -139,15 +157,18 @@ func main() {
 			ignoredAddresses[address] = []uint16{uint16(port)}
 		}
 	}
-	log.Print(ignoredAddresses)
+	log.WithField("addresses", ignoredAddresses).Info("Ignored addresses")
 
-	go producerTicker()
+	go producerTicker(brokers, prefixes)
 
-	//fmt.Printf("%q\n", devices)
 	for _, device := range devices {
-		if strings.HasPrefix(device.Name, "ov-") {
-			//device.Name == "en0" {
-			fmt.Printf("Trying interface %s\n", device.Name)
+		matches := false
+		for _, prefix := range prefixes {
+			matches = matches || strings.HasPrefix(device.Name, prefix)
+		}
+
+		if matches {
+			log.Info("Trying interface %s\n", device.Name)
 
 			go func(deviceName string) {
 				decoded := []gopacket.LayerType{}
@@ -163,6 +184,7 @@ func main() {
 					log.Error("Could not open ", device, ": ", err)
 					return
 				}
+
 				defer h.Close()
 				fmt.Printf("Listening to %s\n", deviceName)
 				packetSource := gopacket.NewPacketSource(h, h.LinkType())
@@ -174,22 +196,23 @@ func main() {
 					netPackage := &NetPackage{Source: Service{}, Destination: Service{}, Packages: 1}
 					for _, layerType := range decoded {
 						switch layerType {
-						// case layers.LayerTypeIPv4:
 						case layers.LayerTypeTCP:
-							netPackage.Source.IP = ipv4.SrcIP.String()
-							netPackage.Destination.IP = ipv4.DstIP.String()
-							netPackage.Len = ipv4.Length
-							netPackage.Timestamp = time.Now().Unix()
-							netPackage.Source.Port = uint16(tcp.SrcPort)
-							netPackage.Destination.Port = uint16(tcp.DstPort)
+							if len(tcp.Payload) > 0 {
+								netPackage.Source.IP = ipv4.SrcIP.String()
+								netPackage.Destination.IP = ipv4.DstIP.String()
+								netPackage.Len = ipv4.Length
+								netPackage.Timestamp = time.Now().Unix()
+								netPackage.Source.Port = uint16(tcp.SrcPort)
+								netPackage.Destination.Port = uint16(tcp.DstPort)
+							}
 						}
 					}
+
 					if netPackage.Len > 0  && notIgnored(netPackage.Destination.IP, netPackage.Destination.Port) &&
 						notIgnored(netPackage.Source.IP, netPackage.Source.Port) {
 						aggregatedPackagesChan <- netPackage
 
 					}
-
 				}
 			}(device.Name)
 		}
@@ -199,8 +222,7 @@ func main() {
 
 func notIgnored(ip string, port uint16) bool {
 	h := ignoredAddresses[ip]
-	if h != nil && len(h) > 0 {
-		//log.Printf("%s:%#v\n" , ip, h)
+	if len(h) > 0 {
 		for _, p := range h {
 			if p == 0 || p == port {
 				return false
