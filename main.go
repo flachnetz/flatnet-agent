@@ -145,7 +145,7 @@ func main() {
 
 	//fmt.Printf("%q\n", devices)
 	for _, device := range devices {
-		if true {
+		if strings.HasPrefix(device.Name, "ov-") {
 			//device.Name == "en0" {
 			fmt.Printf("Trying interface %s\n", device.Name)
 
