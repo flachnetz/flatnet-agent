@@ -4,3 +4,4 @@ import:
 - package: github.com/google/gopacket
 - package: github.com/Shopify/sarama
 - package: github.com/Sirupsen/logrus
+- package: github.com/VividCortex/godaemon
