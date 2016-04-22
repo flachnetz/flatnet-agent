@@ -127,9 +127,10 @@ func producerTicker(brokers, prefixes []string) {
 }
 
 func main() {
+	flagConsul := flag.String("consul", "", "Address of consul")
 	flagDaemon := flag.Bool("daemon", false, "Start flatnet in the background")
 	flagBrokers := flag.String("brokers", "docker:9092,192.168.59.100:9092", "The Kafka brokers to connect to, as a comma separated list")
-	flatPrefixes := flag.String("prefix", "", "Only listen on interfaces having one of the given prefixes. " +
+	flagPrefixes := flag.String("prefix", "", "Only listen on interfaces having one of the given prefixes. " +
 		"Multiple prefixes can be specified as a comma separated list.")
 
 	flag.Parse()
@@ -139,7 +140,7 @@ func main() {
 	}
 
 	brokers := strings.Split(*flagBrokers, ",")
-	prefixes := strings.Split(*flatPrefixes, ",")
+	prefixes := strings.Split(*flagPrefixes, ",")
 
 	devices, _ := pcap.FindAllDevs()
 	wg.Add(1)
@@ -168,7 +169,7 @@ func main() {
 		}
 
 		if matches {
-			log.Info("Trying interface %s\n", device.Name)
+			log.WithField("interface", device.Name).Info("Trying interface")
 
 			go func(deviceName string) {
 				decoded := []gopacket.LayerType{}
@@ -186,13 +187,10 @@ func main() {
 				}
 
 				defer h.Close()
-				fmt.Printf("Listening to %s\n", deviceName)
+				log.WithField("interface", deviceName).Info("Listening to interface")
 				packetSource := gopacket.NewPacketSource(h, h.LinkType())
 				for pkt := range packetSource.Packets() {
 					parser.DecodeLayers(pkt.Data(), &decoded)
-					if len(pkt.Data()) > 0 {
-						//fmt.Printf("%s %s\n", device, pkt.String())
-					}
 					netPackage := &NetPackage{Source: Service{}, Destination: Service{}, Packages: 1}
 					for _, layerType := range decoded {
 						switch layerType {
@@ -204,6 +202,20 @@ func main() {
 								netPackage.Timestamp = time.Now().Unix()
 								netPackage.Source.Port = uint16(tcp.SrcPort)
 								netPackage.Destination.Port = uint16(tcp.DstPort)
+
+								if *flagConsul != "" {
+									serviceName := ServiceName(*flagConsul,
+										netPackage.Source.IP, int(netPackage.Source.Port))
+									if serviceName != "" {
+										netPackage.Source.Name = serviceName
+									}
+
+									serviceName = ServiceName(*flagConsul,
+										netPackage.Destination.IP, int(netPackage.Destination.Port))
+									if serviceName != "" {
+										netPackage.Destination.Name = serviceName
+									}
+								}
 							}
 						}
 					}
@@ -211,7 +223,6 @@ func main() {
 					if netPackage.Len > 0  && notIgnored(netPackage.Destination.IP, netPackage.Destination.Port) &&
 						notIgnored(netPackage.Source.IP, netPackage.Source.Port) {
 						aggregatedPackagesChan <- netPackage
-
 					}
 				}
 			}(device.Name)
