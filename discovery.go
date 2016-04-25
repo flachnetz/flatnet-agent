@@ -2,10 +2,11 @@
 package main
 
 import (
-	"github.com/Sirupsen/logrus"
-	consulapi "github.com/hashicorp/consul/api"
 	"sync"
 	"time"
+
+	"github.com/Sirupsen/logrus"
+	consulapi "github.com/hashicorp/consul/api"
 )
 
 type NameProvider interface {

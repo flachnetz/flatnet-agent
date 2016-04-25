@@ -2,9 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"time"
+
 	"github.com/Shopify/sarama"
 	log "github.com/Sirupsen/logrus"
-	"time"
 )
 
 func newKafkaProducer(kafkas []string) (sarama.SyncProducer, error) {
