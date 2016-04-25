@@ -1,6 +1,5 @@
 package: netstream
 import:
-- package: github.com/miekg/pcap
 - package: github.com/google/gopacket
 - package: github.com/Shopify/sarama
 - package: github.com/Sirupsen/logrus

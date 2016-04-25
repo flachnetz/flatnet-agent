@@ -20,8 +20,6 @@ imports:
   - pcap
 - name: github.com/klauspost/crc32
   version: 19b0b332c9e4516a6370a0456e6182c3b5036720
-- name: github.com/miekg/pcap
-  version: fbfcc463715f6206524a6b1fcc8ed1b9e7567ba5
 - name: github.com/Shopify/sarama
   version: 68920ff1be3bbd31449ab1e2c255c50cedeb755c
 - name: github.com/Sirupsen/logrus
