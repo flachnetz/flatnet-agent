@@ -23,7 +23,7 @@ update-dependencies		:
 						@glide install
 
 test					:
-						@go test -v flatnet/lib flatnet
+						@go test -v flatnet flatnet
 
 format					:
 						@go fmt flatnet flatnet/lib/...
@@ -43,34 +43,6 @@ docker-build			:
 						@docker run --rm --entrypoint=sh -v $$(pwd):/go/src/flatnet:Z $(DOCKER_GOLANG_BUILDER_IMAGE) \
 						-c "apt-get install libpcap-dev -y; cd flatnet; make update-dependencies build"
 
-.setup-git				:
-						@scripts/setup-git.sh
-
-pre-release				:
-						@scripts/pre-release.sh
-
-.release				:
-						@git tag v$(RELEASE_VERSION)
-						@git push release v$(RELEASE_VERSION)
-						@git push release master
-						@scripts/github-release.sh $(RELEASE_VERSION)
-
-release					: clean update-dependencies format test pre-release build .release post-release
-
-docker-release			:
-						docker run --rm -e REMAP_UID=$(REMAP_UID) --entrypoint=sh -v $$(pwd):/go/src/flatnet:Z -v /var/run/docker.sock:/var/run/docker.sock:Z \
-						$(DOCKER_GOLANG_BUILDER_IMAGE) \
-						-c "apt-get install libpcap-dev -y; cd flatnet; make .setup-git release"
-						@$(MAKE) docker-image
-
-post-release			:
-						@scripts/post-release.sh
-						@git push release master
-
-docker-image			:
-						@scripts/build-docker-image.sh $(RELEASE_VERSION) linux amd64
-
-
 clean					:
 						rm __RELEASE_VERSION__ || true
 						rm -rf flatnet* || true
@@ -78,5 +50,5 @@ clean					:
 setup-ide				:
 						@scripts/setup-ide.sh
 
-.PHONY					:release docker-release github-release .release clean docker-compile-test
+.PHONY					:clean docker-compile-test
 

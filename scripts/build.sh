@@ -13,8 +13,8 @@ export GOOS=${2:-linux}
 export GOARCH=${3:-amd64}
 DOCKER=${4:-false}
 
-IMAGE=iwg/winnings-watchdog:$VERSION
+IMAGE=flachnetz/flatnet-agent:$VERSION
 
 echo Building version ${VERSION} ${GOOS} ${GOARCH}
-CGO_ENABLED=0 go build -a -installsuffix cgo -v -ldflags "-X=main.GitHash=$(git rev-parse HEAD)" -o winnings-watchdog-${VERSION}-${GOOS}-${GOARCH}
+CGO_ENABLED=0 go build -a -installsuffix cgo -v -ldflags "-X=main.GitHash=$(git rev-parse HEAD)" -o flatnet-agent-${VERSION}-${GOOS}-${GOARCH}
 
