@@ -23,7 +23,7 @@ update-dependencies		:
 						@glide install
 
 test					:
-						@go test -v flatnet flatnet
+						@go test -v flatnet
 
 format					:
 						@go fmt flatnet flatnet/lib/...
