@@ -1,4 +1,9 @@
-vendor
-.idea
+/vendor
+/.idea
+
+*.iml
+*.log
+
 /flatnet
 /netstream
+/flatnet-agent

@@ -5,99 +5,114 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Sirupsen/logrus"
 	consulapi "github.com/hashicorp/consul/api"
 )
 
+type NameProvider interface {
+	// Returns a name for the service or an empty string,
+	// if no name could be determined.
+	GetName(host string, port uint16) string
+}
+
+type NoopNameProvider struct{}
+
+func (*NoopNameProvider) GetName(host string, port uint16) string {
+	return ""
+}
+
 // Short description
-type Address struct {
+type consulAddressKey struct {
 	Ip   string
-	Port int
+	Port uint16
 }
 
-// Short Description
-var consulServices map[Address]string = make(map[Address]string)
-var mutex sync.Mutex
-var firstUpdate sync.Once
-
-// Short description
-func getServices(consul *consulapi.Client) map[string][]string {
-	catalog := consul.Catalog()
-
-	results, _, err := catalog.Services(nil)
-	if err != nil {
-		return nil
-	}
-
-	return results
+type consulNameProvider struct {
+	client   *consulapi.Client
+	services map[consulAddressKey]string
+	mutex    sync.RWMutex
+	ticker   *time.Ticker
 }
 
-// Short description
-func getServiceInfo(consul *consulapi.Client, entry string, tag string) {
-	catalog := consul.Catalog()
-	serviceInfo, _, err := catalog.Service(entry, tag, nil)
-	if err != nil {
-		return
-	}
-	for _, service := range serviceInfo {
-		var vservice Address
-		var node Address
-		node.Ip = service.Address
-		node.Port = service.ServicePort
-		vservice.Ip = service.ServiceAddress
-		vservice.Port = service.ServicePort
-
-		consulServices[node] = service.ServiceName
-		consulServices[vservice] = service.ServiceName
-	}
-}
-
-// Short description
-func updateServices(consulAddress string) {
+func NewConsulNameProvider(consul string) (*consulNameProvider, error) {
 	config := consulapi.DefaultConfig()
-	config.Address = consulAddress
-	consul, err := consulapi.NewClient(config)
+	config.Address = consul
+	client, err := consulapi.NewClient(config)
 	if err != nil {
-		return
+		return nil, err
 	}
 
-	var catalogEntries map[string][]string
+	services, err := consulListAllServices(client)
+	if err != nil {
+		return nil, err
+	}
 
-	catalogEntries = getServices(consul)
+	provider := &consulNameProvider{
+		client:   client,
+		services: services,
+		ticker:   time.NewTicker(10 * time.Second),
+	}
 
-	for catalogEntry, catalogTags := range catalogEntries {
-		for _, tag := range catalogTags {
-			getServiceInfo(consul, catalogEntry, tag)
+	go provider.updateLoop()
+
+	return provider, nil
+}
+
+func (cnp *consulNameProvider) Close() error {
+	cnp.ticker.Stop()
+	return nil
+}
+
+func (cnp *consulNameProvider) updateLoop() {
+	for range cnp.ticker.C {
+		logrus.Debug("Updating consul services now")
+		services, err := consulListAllServices(cnp.client)
+		if err != nil {
+			logrus.WithError(err).Warn("Could not update consul services")
+		}
+
+		cnp.updateServices(services)
+	}
+}
+
+func (cnp *consulNameProvider) updateServices(services map[consulAddressKey]string) {
+	cnp.mutex.Lock()
+	defer cnp.mutex.Unlock()
+
+	cnp.services = services
+}
+
+func (cnp *consulNameProvider) GetName(host string, port uint16) string {
+	cnp.mutex.RLock()
+	defer cnp.mutex.RUnlock()
+
+	key := consulAddressKey{host, port}
+	return cnp.services[key]
+}
+
+// Short description
+func consulListAllServices(consul *consulapi.Client) (map[consulAddressKey]string, error) {
+	result := make(map[consulAddressKey]string)
+
+	// get a list of all services
+	catalog := consul.Catalog()
+	services, _, err := catalog.Services(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// get info for every one of those services
+	for serviceName, _ := range services {
+		serviceInfos, _, err := catalog.Service(serviceName, "", nil)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, service := range serviceInfos {
+			result[consulAddressKey{service.Address, uint16(service.ServicePort)}] = service.ServiceName
+			result[consulAddressKey{service.ServiceAddress, uint16(service.ServicePort)}] = service.ServiceName
 		}
 	}
-}
 
-func updateServicesLoop(consulAddress string) {
-	tick := time.Tick(1 * time.Minute)
-	for range tick {
-		go func() {
-			mutex.Lock()
-			defer mutex.Unlock()
-			updateServices(consulAddress)
-		}()
-	}
-}
-
-// Short description
-func ServiceName(consulAddress string, ip string, port int) string {
-	firstUpdate.Do(func() {
-		mutex.Lock()
-		defer mutex.Unlock()
-
-		updateServices(consulAddress)
-
-		go updateServicesLoop(consulAddress)
-	})
-
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	node := Address{Ip: ip, Port: port}
-	result := consulServices[node]
-
-	return result
+	return result, nil
 }
