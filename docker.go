@@ -20,7 +20,7 @@ func NewDockerNameProvider(client *docker.Client) NameProvider {
 	provider := &dockerNameProvider{
 		docker:  client,
 		mapping: make(map[string]string),
-		ticker:  time.NewTicker(2 * time.Second),
+		ticker:  time.NewTicker(10 * time.Second),
 	}
 
 	// update first time now
