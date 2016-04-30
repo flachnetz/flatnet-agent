@@ -3,12 +3,13 @@ package capture
 import (
 	"time"
 
+	"io"
+	"net"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
-	"io"
-	"net"
 )
 
 type Port uint16
@@ -34,16 +35,16 @@ type Capture interface {
 
 type pcapCapture struct {
 	device  string
-	packets chan <- Packet
+	packets chan<- Packet
 	handle  *pcap.Handle
 	log     log.FieldLogger
 
 	// This channel will be closed when the handle is closed and the
 	// capturing loop finished.
-	closed  chan struct{}
+	closed chan struct{}
 }
 
-func StartCapture(device string, target chan <- Packet) (Capture, error) {
+func StartCapture(device string, target chan<- Packet) (Capture, error) {
 	handle, err := pcap.OpenLive(device, 128, true, 500)
 	if err != nil {
 		return nil, err

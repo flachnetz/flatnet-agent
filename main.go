@@ -2,13 +2,15 @@ package main
 
 import (
 	"flag"
-	log "github.com/Sirupsen/logrus"
-	"github.com/VividCortex/godaemon"
-	"github.com/flachnetz/flatnet-agent/capture"
-	"github.com/google/gopacket/pcap"
 	"os"
 	"os/signal"
 	"strings"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/VividCortex/godaemon"
+	"github.com/flachnetz/flatnet-agent/capture"
+	"github.com/fsouza/go-dockerclient"
+	"github.com/google/gopacket/pcap"
 )
 
 type NetPackages struct {
@@ -41,6 +43,8 @@ func main() {
 	flagPrefixes := flag.String("interfaces", "", "Only listen on interfaces having one of the given prefixes. "+
 		"Multiple prefixes can be specified as a comma separated list.")
 
+	flagDocker := flag.String("docker", "", "Docker endpoint. Can be unix:///var/run/docker.sock or tcp://address:port")
+
 	flag.Parse()
 
 	if *flagDaemon {
@@ -65,6 +69,7 @@ func main() {
 	}
 
 	var nameProvider NameProvider = &NoopNameProvider{}
+
 	if *flagConsul != "" {
 		var err error
 		nameProvider, err = NewConsulNameProvider(*flagConsul)
@@ -72,6 +77,16 @@ func main() {
 			log.Fatal("Could not initialize consul name provider")
 			return
 		}
+	}
+
+	if *flagDocker != "" {
+		client, err := docker.NewClient(*flagDocker)
+		if err != nil {
+			log.WithError(err).Fatal("Could not create docker client")
+			return
+		}
+
+		nameProvider = NewDockerNameProvider(client)
 	}
 
 	brokers := strings.Split(*flagBrokers, ",")
