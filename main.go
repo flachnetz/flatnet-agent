@@ -139,7 +139,6 @@ func main() {
 	// close down packet stream and kafka
 	log.Info("Close packet channel and kafka")
 	close(packets)
-	consumer.Close()
 
 	log.Info("Waiting for everything to shutdown")
 	consumer.Join()
