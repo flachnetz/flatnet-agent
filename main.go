@@ -46,6 +46,8 @@ func main() {
 	flagBrokers := kingpin.Flag("kafka", "Address of kafka brokers to connect to. Can be specified multiple times.").Required().TCPList()
 	flagInterfacePattern := kingpin.Flag("interface", "Regular expression to match against interfaces to be captured.").Default("^(eth|en|docker)[0-9]+$").Regexp()
 	flagDocker := kingpin.Flag("docker", "Docker endpoint. Can be unix:///var/run/docker.sock or tcp://address:port.").String()
+	// flagMultiNameProvider := kingpin.Flag("multi", "").Bool()
+
 	kingpin.Parse()
 
 	if *flagDaemon {
@@ -96,6 +98,22 @@ func main() {
 
 		nameProvider = discovery.NewDockerNameProvider(client)
 	}
+
+	//if *flagMultiNameProvider {
+	//	// read this from config file later.
+	//
+	//	var err error
+	//	nameProvider, err = discovery.NewMultiNameProvider(discovery.MultiNameProviderConfig{
+	//		"172.19.0.0/16":     discovery.NewConstantNameProvider("ask docker!"),
+	//		"10.0.0.0/8::16000": discovery.NewConstantNameProvider("maybe ask consul for ports < 16000"),
+	//		"10.2.3.4/32:16000": discovery.NewConstantNameProvider("cs"),
+	//	})
+	//
+	//	if err != nil {
+	//		log.WithError(err).Fatal("Could not initialize multi name provider")
+	//		return
+	//	}
+	//}
 
 	var brokers []string
 	for _, brokerAddress := range *flagBrokers {
