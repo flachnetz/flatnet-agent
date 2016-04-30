@@ -9,8 +9,10 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/VividCortex/godaemon"
 	"github.com/flachnetz/flatnet-agent/capture"
+	"github.com/flachnetz/flatnet-agent/discovery"
 	"github.com/fsouza/go-dockerclient"
 	"github.com/google/gopacket/pcap"
+	consulapi "github.com/hashicorp/consul/api"
 )
 
 type NetPackages struct {
@@ -68,13 +70,20 @@ func main() {
 		}
 	}
 
-	var nameProvider NameProvider = &NoopNameProvider{}
+	nameProvider := discovery.NewNoopNameProvider()
 
 	if *flagConsul != "" {
-		var err error
-		nameProvider, err = NewConsulNameProvider(*flagConsul)
+		config := consulapi.DefaultConfig()
+		config.Address = *flagConsul
+		client, err := consulapi.NewClient(config)
 		if err != nil {
-			log.Fatal("Could not initialize consul name provider")
+			log.WithError(err).Fatal("Could not initialize consul client")
+			return
+		}
+
+		nameProvider, err = discovery.NewConsulNameProvider(client)
+		if err != nil {
+			log.WithError(err).Fatal("Could not initialize consul name provider")
 			return
 		}
 	}
@@ -86,7 +95,7 @@ func main() {
 			return
 		}
 
-		nameProvider = NewDockerNameProvider(client)
+		nameProvider = discovery.NewDockerNameProvider(client)
 	}
 
 	brokers := strings.Split(*flagBrokers, ",")

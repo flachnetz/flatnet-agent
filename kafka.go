@@ -7,6 +7,7 @@ import (
 	"github.com/Shopify/sarama"
 	log "github.com/Sirupsen/logrus"
 	"github.com/flachnetz/flatnet-agent/capture"
+	"github.com/flachnetz/flatnet-agent/discovery"
 )
 
 func newKafkaProducer(kafkas []string) (sarama.SyncProducer, error) {
@@ -22,14 +23,15 @@ func newKafkaProducer(kafkas []string) (sarama.SyncProducer, error) {
 type PacketConsumer struct {
 	packets        <-chan capture.Packet
 	kafka          sarama.SyncProducer
-	nameProvider   NameProvider
+	nameProvider   discovery.NameProvider
 	aggregated     chan *NetPackages
 	topic          string
 	producerClosed chan struct{}
 	closeSignal    chan bool
 }
 
-func NewPacketConsumer(brokers []string, nameProvider NameProvider, packets <-chan capture.Packet) (*PacketConsumer, error) {
+func NewPacketConsumer(brokers []string, nameProvider discovery.NameProvider, packets <-chan capture.Packet) (*PacketConsumer, error) {
+
 	kafka, err := newKafkaProducer(brokers)
 	if err != nil {
 		return nil, err
