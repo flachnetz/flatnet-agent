@@ -1,10 +1,12 @@
 package main
 
 import (
-	"flag"
 	"os"
 	"os/signal"
-	"strings"
+
+	"gopkg.in/alecthomas/kingpin.v2"
+
+	"regexp"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/VividCortex/godaemon"
@@ -37,17 +39,14 @@ type NetPackage struct {
 }
 
 func main() {
-	flagConsul := flag.String("consul", "", "Address of consul")
-	flagDaemon := flag.Bool("daemon", false, "Start flatnet in the background")
-	flagVerbose := flag.Bool("verbose", false, "Activate verbose logging")
-	flagLogfile := flag.String("logfile", "", "Set this to redirect logging into a logfile")
-	flagBrokers := flag.String("brokers", "docker:9092,192.168.59.100:9092", "The Kafka brokers to connect to, as a comma separated list")
-	flagPrefixes := flag.String("interfaces", "", "Only listen on interfaces having one of the given prefixes. "+
-		"Multiple prefixes can be specified as a comma separated list.")
-
-	flagDocker := flag.String("docker", "", "Docker endpoint. Can be unix:///var/run/docker.sock or tcp://address:port")
-
-	flag.Parse()
+	flagConsul := kingpin.Flag("consul", "Address of consul.").TCP()
+	flagDaemon := kingpin.Flag("daemon", "Start the agent as a daemon.").Bool()
+	flagVerbose := kingpin.Flag("verbose", "Enable verbose logging.").Short('v').Bool()
+	flagLogfile := kingpin.Flag("logfile", "Set this to redirect logging into a logfile.").String()
+	flagBrokers := kingpin.Flag("kafka", "Address of kafka brokers to connect to. Can be specified multiple times.").Required().TCPList()
+	flagInterfacePattern := kingpin.Flag("interface", "Regular expression to match against interfaces to be captured.").Default("^(eth|en|docker)[0-9]+$").Regexp()
+	flagDocker := kingpin.Flag("docker", "Docker endpoint. Can be unix:///var/run/docker.sock or tcp://address:port.").String()
+	kingpin.Parse()
 
 	if *flagDaemon {
 		log.Info("Daemonizing process into background now")
@@ -72,9 +71,9 @@ func main() {
 
 	nameProvider := discovery.NewNoopNameProvider()
 
-	if *flagConsul != "" {
+	if *flagConsul != nil {
 		config := consulapi.DefaultConfig()
-		config.Address = *flagConsul
+		config.Address = (*flagConsul).String()
 		client, err := consulapi.NewClient(config)
 		if err != nil {
 			log.WithError(err).Fatal("Could not initialize consul client")
@@ -98,8 +97,10 @@ func main() {
 		nameProvider = discovery.NewDockerNameProvider(client)
 	}
 
-	brokers := strings.Split(*flagBrokers, ",")
-	prefixes := strings.Split(*flagPrefixes, ",")
+	var brokers []string
+	for _, brokerAddress := range *flagBrokers {
+		brokers = append(brokers, brokerAddress.String())
+	}
 
 	devices, err := pcap.FindAllDevs()
 	if err != nil {
@@ -121,7 +122,7 @@ func main() {
 
 	var captures []capture.Capture
 	for _, device := range devices {
-		if shouldCapture(device, prefixes) {
+		if shouldCapture(device, *flagInterfacePattern) {
 			logger := log.WithField("interface", device.Name)
 
 			logger.Info("Try to open interface")
@@ -153,13 +154,8 @@ func main() {
 	consumer.Join()
 }
 
-func shouldCapture(device pcap.Interface, prefixes []string) bool {
-	matches := false
-	for _, prefix := range prefixes {
-		matches = matches || strings.HasPrefix(device.Name, prefix)
-	}
-
-	return matches
+func shouldCapture(device pcap.Interface, pattern *regexp.Regexp) bool {
+	return pattern.MatchString(device.Name)
 }
 
 func shutdownSignalHandler() <-chan os.Signal {
