@@ -2,16 +2,13 @@ package main
 
 import (
 	"flag"
+	log "github.com/Sirupsen/logrus"
+	"github.com/VividCortex/godaemon"
+	"github.com/flachnetz/flatnet-agent/capture"
+	"github.com/google/gopacket/pcap"
 	"os"
 	"os/signal"
 	"strings"
-	"time"
-
-	"io"
-
-	log "github.com/Sirupsen/logrus"
-	"github.com/VividCortex/godaemon"
-	"github.com/google/gopacket/pcap"
 )
 
 type NetPackages struct {
@@ -30,67 +27,9 @@ type Service struct {
 type NetPackage struct {
 	Source      Service
 	Destination Service
-	Len         uint16
-	Packages    int
-	Timestamp   int64
-}
-
-func aggregate(packages <-chan *NetPackage, consumer chan<- *NetPackages, nameProvider NameProvider) {
-	type aggregationKey struct {
-		source      Service
-		destination Service
-	}
-
-	// aggregate for a few seconds before sending a packet
-	aggregationInterval := 2 * time.Second
-	ticker := time.NewTicker(aggregationInterval)
-	defer ticker.Stop()
-
-	aggregated := make(map[aggregationKey]*NetPackage)
-	for {
-		select {
-		case now := <-ticker.C:
-			if len(aggregated) > 0 {
-				aggregatedPackagesList := []*NetPackage{}
-				for _, p := range aggregated {
-					aggregatedPackagesList = append(aggregatedPackagesList, p)
-				}
-
-				// reset the aggregation map
-				aggregated = make(map[aggregationKey]*NetPackage)
-
-				result := &NetPackages{
-					Timestamp:        now.UnixNano() / int64(time.Millisecond),
-					ServicePackages:  aggregatedPackagesList,
-					DurationInMillis: int(aggregationInterval / time.Millisecond),
-				}
-
-				// send non-blocking, drop packages if consumer queue is full.
-				select {
-				case consumer <- result:
-				default:
-				}
-			}
-
-		case netPackage, ok := <-packages:
-			if !ok {
-				// end of stream reached...
-				return
-			}
-
-			key := aggregationKey{netPackage.Source, netPackage.Destination}
-
-			if p, exists := aggregated[key]; exists {
-				p.Len += netPackage.Len
-				p.Packages += 1
-			} else {
-				aggregated[key] = netPackage
-
-				netPackage.Source.Name = nameProvider.GetName(netPackage.Source.IP, netPackage.Source.Port)
-				netPackage.Destination.Name = nameProvider.GetName(netPackage.Destination.IP, netPackage.Destination.Port)
-			}
-		}
-	}
+	Len         uint32
+	Count       int
+	Timestamp   uint64
 }
 
 func main() {
@@ -144,24 +83,25 @@ func main() {
 		return
 	}
 
-	packages := make(chan *NetPackage, 2048)
+	// All capture go-routines will put their captured packets into this channel.
+	packets := make(chan capture.Packet, 2048)
 
-	// start the package consumer. It willl take packages from the channel,
+	// Start the package consumer. It will take packages from the channel,
 	// aggregate them and send them to kafka. The resulting channel will be
-	// closed when the consumer finsihes his work.
-	producerClosed, err := startPackageConsumer(brokers, nameProvider, packages)
+	// closed when the consumer finishes his work.
+	consumer, err := NewPacketConsumer(brokers, nameProvider, packets)
 	if err != nil {
 		log.WithError(err).Fatal("Could not connect to kafka broker")
 		return
 	}
 
-	var captures []io.Closer
+	var captures []capture.Capture
 	for _, device := range devices {
 		if shouldCapture(device, prefixes) {
 			logger := log.WithField("interface", device.Name)
 
-			logger.Info("Trying interface")
-			capture, err := StartTcpCapture(device.Name, packages)
+			logger.Info("Try to open interface")
+			capture, err := capture.StartCapture(device.Name, packets)
 			if err != nil {
 				logger.WithError(err).Warn("Could not open interface")
 				continue
@@ -175,13 +115,19 @@ func main() {
 	// wait for the user to press ctrl-c
 	<-gracefulShutdown
 
+	log.Info("Closing capture devices")
 	for _, capture := range captures {
-		capture.Close()
+		c := capture
+		go c.Close()
 	}
 
-	// close down package stream and kafka
-	close(packages)
-	<-producerClosed
+	// close down packet stream and kafka
+	log.Info("Close packet channel and kafka")
+	close(packets)
+	consumer.Close()
+
+	log.Info("Waiting for everything to shutdown")
+	consumer.Join()
 }
 
 func shouldCapture(device pcap.Interface, prefixes []string) bool {
