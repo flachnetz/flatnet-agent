@@ -1,5 +1,5 @@
 // Put documentation here
-package main
+package discovery
 
 import (
 	"sync"
@@ -8,18 +8,6 @@ import (
 	"github.com/Sirupsen/logrus"
 	consulapi "github.com/hashicorp/consul/api"
 )
-
-type NameProvider interface {
-	// Returns a name for the service or an empty string,
-	// if no name could be determined.
-	GetName(host string, port uint16) string
-}
-
-type NoopNameProvider struct{}
-
-func (*NoopNameProvider) GetName(host string, port uint16) string {
-	return ""
-}
 
 // Short description
 type consulAddressKey struct {
@@ -34,14 +22,7 @@ type consulNameProvider struct {
 	ticker   *time.Ticker
 }
 
-func NewConsulNameProvider(consul string) (*consulNameProvider, error) {
-	config := consulapi.DefaultConfig()
-	config.Address = consul
-	client, err := consulapi.NewClient(config)
-	if err != nil {
-		return nil, err
-	}
-
+func NewConsulNameProvider(client *consulapi.Client) (*consulNameProvider, error) {
 	services, err := consulListAllServices(client)
 	if err != nil {
 		return nil, err

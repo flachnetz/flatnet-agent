@@ -1,17 +1,20 @@
 package main
 
 import (
-	"flag"
 	"os"
 	"os/signal"
-	"strings"
-	"time"
 
-	"io"
+	"gopkg.in/alecthomas/kingpin.v2"
+
+	"regexp"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/VividCortex/godaemon"
+	"github.com/flachnetz/flatnet-agent/capture"
+	"github.com/flachnetz/flatnet-agent/discovery"
+	"github.com/fsouza/go-dockerclient"
 	"github.com/google/gopacket/pcap"
+	consulapi "github.com/hashicorp/consul/api"
 )
 
 type NetPackages struct {
@@ -30,79 +33,22 @@ type Service struct {
 type NetPackage struct {
 	Source      Service
 	Destination Service
-	Len         uint16
-	Packages    int
-	Timestamp   int64
-}
-
-func aggregate(packages <-chan *NetPackage, consumer chan<- *NetPackages, nameProvider NameProvider) {
-	type aggregationKey struct {
-		source      Service
-		destination Service
-	}
-
-	// aggregate for a few seconds before sending a packet
-	aggregationInterval := 2 * time.Second
-	ticker := time.NewTicker(aggregationInterval)
-	defer ticker.Stop()
-
-	aggregated := make(map[aggregationKey]*NetPackage)
-	for {
-		select {
-		case now := <-ticker.C:
-			if len(aggregated) > 0 {
-				aggregatedPackagesList := []*NetPackage{}
-				for _, p := range aggregated {
-					aggregatedPackagesList = append(aggregatedPackagesList, p)
-				}
-
-				// reset the aggregation map
-				aggregated = make(map[aggregationKey]*NetPackage)
-
-				result := &NetPackages{
-					Timestamp:        now.UnixNano() / int64(time.Millisecond),
-					ServicePackages:  aggregatedPackagesList,
-					DurationInMillis: int(aggregationInterval / time.Millisecond),
-				}
-
-				// send non-blocking, drop packages if consumer queue is full.
-				select {
-				case consumer <- result:
-				default:
-				}
-			}
-
-		case netPackage, ok := <-packages:
-			if !ok {
-				// end of stream reached...
-				return
-			}
-
-			key := aggregationKey{netPackage.Source, netPackage.Destination}
-
-			if p, exists := aggregated[key]; exists {
-				p.Len += netPackage.Len
-				p.Packages += 1
-			} else {
-				aggregated[key] = netPackage
-
-				netPackage.Source.Name = nameProvider.GetName(netPackage.Source.IP, netPackage.Source.Port)
-				netPackage.Destination.Name = nameProvider.GetName(netPackage.Destination.IP, netPackage.Destination.Port)
-			}
-		}
-	}
+	Len         uint32
+	Count       int
+	Timestamp   uint64
 }
 
 func main() {
-	flagConsul := flag.String("consul", "", "Address of consul")
-	flagDaemon := flag.Bool("daemon", false, "Start flatnet in the background")
-	flagVerbose := flag.Bool("verbose", false, "Activate verbose logging")
-	flagLogfile := flag.String("logfile", "", "Set this to redirect logging into a logfile")
-	flagBrokers := flag.String("brokers", "docker:9092,192.168.59.100:9092", "The Kafka brokers to connect to, as a comma separated list")
-	flagPrefixes := flag.String("interfaces", "", "Only listen on interfaces having one of the given prefixes. "+
-		"Multiple prefixes can be specified as a comma separated list.")
+	flagConsul := kingpin.Flag("consul", "Address of consul.").TCP()
+	flagDaemon := kingpin.Flag("daemon", "Start the agent as a daemon.").Bool()
+	flagVerbose := kingpin.Flag("verbose", "Enable verbose logging.").Short('v').Bool()
+	flagLogfile := kingpin.Flag("logfile", "Set this to redirect logging into a logfile.").String()
+	flagBrokers := kingpin.Flag("kafka", "Address of kafka brokers to connect to. Can be specified multiple times.").Required().TCPList()
+	flagInterfacePattern := kingpin.Flag("interface", "Regular expression to match against interfaces to be captured.").Default("^(eth|en|docker)[0-9]+$").Regexp()
+	flagDocker := kingpin.Flag("docker", "Docker endpoint. Can be unix:///var/run/docker.sock or tcp://address:port.").String()
+	// flagMultiNameProvider := kingpin.Flag("multi", "").Bool()
 
-	flag.Parse()
+	kingpin.Parse()
 
 	if *flagDaemon {
 		log.Info("Daemonizing process into background now")
@@ -125,18 +71,54 @@ func main() {
 		}
 	}
 
-	var nameProvider NameProvider = &NoopNameProvider{}
-	if *flagConsul != "" {
-		var err error
-		nameProvider, err = NewConsulNameProvider(*flagConsul)
+	nameProvider := discovery.NewNoopNameProvider()
+
+	if *flagConsul != nil {
+		config := consulapi.DefaultConfig()
+		config.Address = (*flagConsul).String()
+		client, err := consulapi.NewClient(config)
 		if err != nil {
-			log.Fatal("Could not initialize consul name provider")
+			log.WithError(err).Fatal("Could not initialize consul client")
+			return
+		}
+
+		nameProvider, err = discovery.NewConsulNameProvider(client)
+		if err != nil {
+			log.WithError(err).Fatal("Could not initialize consul name provider")
 			return
 		}
 	}
 
-	brokers := strings.Split(*flagBrokers, ",")
-	prefixes := strings.Split(*flagPrefixes, ",")
+	if *flagDocker != "" {
+		client, err := docker.NewClient(*flagDocker)
+		if err != nil {
+			log.WithError(err).Fatal("Could not create docker client")
+			return
+		}
+
+		nameProvider = discovery.NewDockerNameProvider(client)
+	}
+
+	//if *flagMultiNameProvider {
+	//	// read this from config file later.
+	//
+	//	var err error
+	//	nameProvider, err = discovery.NewMultiNameProvider(discovery.MultiNameProviderConfig{
+	//		"172.19.0.0/16":     discovery.NewConstantNameProvider("ask docker!"),
+	//		"10.0.0.0/8::16000": discovery.NewConstantNameProvider("maybe ask consul for ports < 16000"),
+	//		"10.2.3.4/32:16000": discovery.NewConstantNameProvider("cs"),
+	//	})
+	//
+	//	if err != nil {
+	//		log.WithError(err).Fatal("Could not initialize multi name provider")
+	//		return
+	//	}
+	//}
+
+	var brokers []string
+	for _, brokerAddress := range *flagBrokers {
+		brokers = append(brokers, brokerAddress.String())
+	}
 
 	devices, err := pcap.FindAllDevs()
 	if err != nil {
@@ -144,24 +126,25 @@ func main() {
 		return
 	}
 
-	packages := make(chan *NetPackage, 2048)
+	// All capture go-routines will put their captured packets into this channel.
+	packets := make(chan capture.Packet, 2048)
 
-	// start the package consumer. It willl take packages from the channel,
+	// Start the package consumer. It will take packages from the channel,
 	// aggregate them and send them to kafka. The resulting channel will be
-	// closed when the consumer finsihes his work.
-	producerClosed, err := startPackageConsumer(brokers, nameProvider, packages)
+	// closed when the consumer finishes his work.
+	consumer, err := NewPacketConsumer(brokers, nameProvider, packets)
 	if err != nil {
 		log.WithError(err).Fatal("Could not connect to kafka broker")
 		return
 	}
 
-	var captures []io.Closer
+	var captures []capture.Capture
 	for _, device := range devices {
-		if shouldCapture(device, prefixes) {
+		if shouldCapture(device, *flagInterfacePattern) {
 			logger := log.WithField("interface", device.Name)
 
-			logger.Info("Trying interface")
-			capture, err := StartTcpCapture(device.Name, packages)
+			logger.Info("Try to open interface")
+			capture, err := capture.StartCapture(device.Name, packets)
 			if err != nil {
 				logger.WithError(err).Warn("Could not open interface")
 				continue
@@ -175,22 +158,22 @@ func main() {
 	// wait for the user to press ctrl-c
 	<-gracefulShutdown
 
+	log.Info("Closing capture devices")
 	for _, capture := range captures {
-		capture.Close()
+		c := capture
+		go c.Close()
 	}
 
-	// close down package stream and kafka
-	close(packages)
-	<-producerClosed
+	// close down packet stream and kafka
+	log.Info("Close packet channel and kafka")
+	close(packets)
+
+	log.Info("Waiting for everything to shutdown")
+	consumer.Join()
 }
 
-func shouldCapture(device pcap.Interface, prefixes []string) bool {
-	matches := false
-	for _, prefix := range prefixes {
-		matches = matches || strings.HasPrefix(device.Name, prefix)
-	}
-
-	return matches
+func shouldCapture(device pcap.Interface, pattern *regexp.Regexp) bool {
+	return pattern.MatchString(device.Name)
 }
 
 func shutdownSignalHandler() <-chan os.Signal {

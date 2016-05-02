@@ -4,3 +4,5 @@ import:
 - package: github.com/Shopify/sarama
 - package: github.com/Sirupsen/logrus
 - package: github.com/VividCortex/godaemon
+- package: github.com/fsouza/go-dockerclient
+- package: gopkg.in/alecthomas/kingpin.v2
